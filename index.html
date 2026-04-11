@@ -181,11 +181,12 @@ async function doLogin() {
   try {
     // Google Apps Script는 POST + redirect 이슈가 있으므로 no-cors 우회 없이
     // fetch mode: 'cors' + GAS 배포 시 "모든 사용자" 접근 허용 필요
-    const res = await fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' }, // GAS CORS 호환
-      body: JSON.stringify({ action: 'login', id, password: pw })
-    });
+    const params = new URLSearchParams({
+  action: 'login',
+  id: id,
+  password: pw
+});
+const res = await fetch(`${GAS_URL}?${params}`);
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || '로그인 실패');
 
