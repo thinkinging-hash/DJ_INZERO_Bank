@@ -26,97 +26,53 @@ body{
   position:relative;
   overflow:hidden;
 }
-/* 배경 효과 */
-.bg-orb{
-  position:fixed;border-radius:50%;filter:blur(80px);opacity:.12;pointer-events:none;
-}
+.bg-orb{position:fixed;border-radius:50%;filter:blur(80px);opacity:.12;pointer-events:none;}
 .bg-orb-1{width:500px;height:500px;background:var(--teal);top:-100px;left:-100px;}
 .bg-orb-2{width:400px;height:400px;background:var(--blue);bottom:-80px;right:-60px;}
 .bg-grid{
   position:fixed;inset:0;
-  background-image:
-    linear-gradient(rgba(255,255,255,.02) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(255,255,255,.02) 1px,transparent 1px);
-  background-size:40px 40px;
-  pointer-events:none;
+  background-image:linear-gradient(rgba(255,255,255,.02) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.02) 1px,transparent 1px);
+  background-size:40px 40px;pointer-events:none;
 }
-
-.login-wrap{
-  position:relative;z-index:1;
-  width:100%;max-width:400px;padding:20px;
-}
+.login-wrap{position:relative;z-index:1;width:100%;max-width:400px;padding:20px;}
 .login-brand{text-align:center;margin-bottom:36px;}
 .login-logo-circle{
   width:64px;height:64px;border-radius:50%;
   background:linear-gradient(135deg,var(--teal),var(--blue));
   display:flex;align-items:center;justify-content:center;
-  margin:0 auto 14px;
-  box-shadow:0 0 30px rgba(0,212,170,.3);
-  font-size:28px;
+  margin:0 auto 14px;box-shadow:0 0 30px rgba(0,212,170,.3);font-size:28px;
 }
 .login-title{font-size:24px;font-weight:900;letter-spacing:-.5px;}
 .login-subtitle{font-size:12px;color:var(--text3);margin-top:5px;letter-spacing:.5px;}
-
 .login-card{
-  background:var(--panel);
-  border:1px solid var(--border);
-  border-radius:16px;
-  padding:28px 26px;
-  backdrop-filter:blur(10px);
-  box-shadow:0 20px 60px rgba(0,0,0,.35);
+  background:var(--panel);border:1px solid var(--border);border-radius:16px;
+  padding:28px 26px;backdrop-filter:blur(10px);box-shadow:0 20px 60px rgba(0,0,0,.35);
 }
 .field{margin-bottom:16px;}
-.field label{
-  display:block;font-size:11px;font-weight:700;
-  color:var(--text2);letter-spacing:.4px;margin-bottom:7px;
-}
+.field label{display:block;font-size:11px;font-weight:700;color:var(--text2);letter-spacing:.4px;margin-bottom:7px;}
 .field input{
-  width:100%;padding:12px 14px;
-  border:1px solid var(--border);
-  border-radius:10px;
-  background:var(--panel2);
-  font-size:14px;color:var(--text);
-  outline:none;
-  font-family:'Noto Sans KR',sans-serif;
-  transition:border-color .2s,box-shadow .2s;
+  width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:10px;
+  background:var(--panel2);font-size:14px;color:var(--text);outline:none;
+  font-family:'Noto Sans KR',sans-serif;transition:border-color .2s,box-shadow .2s;
 }
-.field input:focus{
-  border-color:var(--teal);
-  box-shadow:0 0 0 3px rgba(0,212,170,.1);
-}
+.field input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(0,212,170,.1);}
 .field input::placeholder{color:var(--text3);}
-
 .login-btn{
-  width:100%;padding:13px;margin-top:4px;
-  border-radius:10px;border:none;
-  background:linear-gradient(135deg,var(--teal),var(--teal2));
-  color:var(--navy);
-  font-size:14px;font-weight:900;
-  cursor:pointer;
-  font-family:'Noto Sans KR',sans-serif;
-  transition:opacity .2s,transform .1s;
-  box-shadow:0 4px 16px rgba(0,212,170,.3);
+  width:100%;padding:13px;margin-top:4px;border-radius:10px;border:none;
+  background:linear-gradient(135deg,var(--teal),var(--teal2));color:var(--navy);
+  font-size:14px;font-weight:900;cursor:pointer;font-family:'Noto Sans KR',sans-serif;
+  transition:opacity .2s,transform .1s;box-shadow:0 4px 16px rgba(0,212,170,.3);
 }
 .login-btn:hover{opacity:.9;transform:translateY(-1px);}
 .login-btn:active{transform:translateY(0);}
 .login-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;}
-
 .error-msg{
-  margin-top:12px;padding:10px 14px;
-  border-radius:8px;
-  background:rgba(255,107,107,.1);
-  border:1px solid rgba(255,107,107,.2);
-  color:var(--coral);
-  font-size:12px;
-  display:none;
+  margin-top:12px;padding:10px 14px;border-radius:8px;
+  background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.2);
+  color:var(--coral);font-size:12px;display:none;
 }
 .error-msg.show{display:block;}
-
-.login-footer{
-  text-align:center;margin-top:20px;
-  font-size:11px;color:var(--text3);
-  line-height:1.6;
-}
+.login-footer{text-align:center;margin-top:20px;font-size:11px;color:var(--text3);line-height:1.6;}
 </style>
 </head>
 <body>
@@ -130,7 +86,6 @@ body{
     <div class="login-title">대생인재로</div>
     <div class="login-subtitle">대전생활과학고등학교 · 학생 관리 대시보드</div>
   </div>
-
   <div class="login-card">
     <div class="field">
       <label>아이디</label>
@@ -143,7 +98,6 @@ body{
     <button class="login-btn" id="login-btn" onclick="doLogin()">로그인</button>
     <div class="error-msg" id="error-msg"></div>
   </div>
-
   <div class="login-footer">
     아이디/비밀번호는 관리자에게 문의하세요<br>
     © 2026 대전생활과학고등학교
@@ -151,10 +105,7 @@ body{
 </div>
 
 <script>
-// ★ Google Apps Script 웹앱 배포 URL로 교체하세요
-// 예: https://script.google.com/macros/s/AKfyc.../exec
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbxc21xYYOUj5o0jKL7lwWkJbGNAeyHmA7qYMmpPmBJkuLw_LrM3gs41LStnykpHyoAX/exec?action=ping
-';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbymf5R-qbALqiXBwK3hwVIOed68fqmno_wuCoK7GsXL0NSYtMisx3A54r1FlsaEfu-nWw/exec';
 
 document.getElementById('inp-pw').addEventListener('keydown', e => {
   if (e.key === 'Enter') doLogin();
@@ -164,9 +115,9 @@ document.getElementById('inp-id').addEventListener('keydown', e => {
 });
 
 async function doLogin() {
-  const id = document.getElementById('inp-id').value.trim();
-  const pw = document.getElementById('inp-pw').value;
-  const btn = document.getElementById('login-btn');
+  const id    = document.getElementById('inp-id').value.trim();
+  const pw    = document.getElementById('inp-pw').value;
+  const btn   = document.getElementById('login-btn');
   const errEl = document.getElementById('error-msg');
 
   if (!id || !pw) {
@@ -180,18 +131,11 @@ async function doLogin() {
   errEl.classList.remove('show');
 
   try {
-    // Google Apps Script는 POST + redirect 이슈가 있으므로 no-cors 우회 없이
-    // fetch mode: 'cors' + GAS 배포 시 "모든 사용자" 접근 허용 필요
-    const params = new URLSearchParams({
-  action: 'login',
-  id: id,
-  password: pw
-});
-const res = await fetch(`${GAS_URL}?${params}`);
+    const params = new URLSearchParams({ action: 'login', id: id, password: pw });
+    const res  = await fetch(GAS_URL + '?' + params.toString());
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || '로그인 실패');
 
-    // 세션 저장 (GitHub Pages는 서버 없으므로 sessionStorage 사용)
     sessionStorage.setItem('gas_token', data.token);
     sessionStorage.setItem('gas_role',  data.role);
     sessionStorage.setItem('gas_name',  data.name);
