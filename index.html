@@ -391,19 +391,27 @@ document.getElementById('live-date').textContent = new Date().toLocaleDateString
 ──────────────────────────────────────────── */
 let currentUser = null; // { name, role, token }
 
-async function gasGet(params) {
-  const url = new URL(GAS_URL);
-  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
-  const res = await fetch(url.toString());
-  return res.json();
-}
+/* ────────────────────────────────────────────
+   GAS 통신 헬퍼
+   - GAS 웹앱은 POST도 302 리다이렉트를 할 수 있어
+     redirect:'follow' 를 명시합니다.
+   - Content-Type 헤더를 보내면 브라우저가 프리플라이트를
+     먼저 보내 CORS 오류가 나므로 헤더를 제거하고
+     body를 URLSearchParams 대신 plain text로 보냅니다.
+──────────────────────────────────────────── */
 async function gasPost(body) {
   const res = await fetch(GAS_URL, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(body)
+    method : 'POST',
+    redirect: 'follow',
+    body   : JSON.stringify(body)   // Content-Type 헤더 없음 → simple request → CORS 통과
   });
-  return res.json();
+  const text = await res.text();
+  try { return JSON.parse(text); }
+  catch(e) { return { error: '응답 파싱 오류: ' + text.slice(0, 120) }; }
+}
+// GET도 POST로 통일 (리다이렉트 파라미터 유실 방지)
+async function gasGet(params) {
+  return gasPost(params);
 }
 
 function showLogin() {
