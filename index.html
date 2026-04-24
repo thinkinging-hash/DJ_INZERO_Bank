@@ -82,7 +82,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--navy);color:var(--te
 .goal-warn{background:rgba(255,107,107,.12);color:var(--coral)}
 .goal-flat{background:rgba(255,255,255,.08);color:var(--text2)}
 .grid-row{display:grid;gap:14px;margin-bottom:14px}
-.grid-overview-top{grid-template-columns:1.05fr 1.05fr .9fr .9fr}
+.grid-overview-top{grid-template-columns:.85fr .85fr 1fr .8fr .8fr}
 .grid-2{grid-template-columns:1fr 1fr}
 .grid-3{grid-template-columns:1fr 1fr 1fr}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;overflow:hidden}
@@ -426,9 +426,22 @@ function applySession(user) {
   document.getElementById('topbar-user').textContent = `👤 ${user.name} (${user.role === 'admin' ? '관리자' : '조회자'})`;
   document.getElementById('topbar-user').style.display = '';
   document.getElementById('logout-btn').style.display = '';
-  if (user.role === 'admin') {
-    document.getElementById('tab-btn-users').style.display = '';
-  }
+
+  // ── 역할별 탭 표시 제어 ──
+  const isAdmin = user.role === 'admin';
+  // viewer는 출신중학교·학생조회·졸업생사후관리·사용자관리 숨김
+  const viewerHiddenTabs = ['middle', 'student-search', 'graduates', 'users'];
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    const tab = btn.dataset.tab;
+    if (tab === 'users') {
+      btn.style.display = isAdmin ? '' : 'none';
+    } else if (viewerHiddenTabs.includes(tab)) {
+      btn.style.display = isAdmin ? '' : 'none';
+    } else {
+      btn.style.display = '';
+    }
+  });
+
   hideLogin();
   // ★ 로그인 직후 구글 시트 데이터 자동 로드
   loadDataFromGAS();
@@ -438,7 +451,8 @@ function doLogout() {
   sessionStorage.removeItem('gasUser');
   document.getElementById('topbar-user').style.display = 'none';
   document.getElementById('logout-btn').style.display = 'none';
-  document.getElementById('tab-btn-users').style.display = 'none';
+  // 탭 전부 숨김 (로그인 화면으로 돌아가므로)
+  document.querySelectorAll('.tab-btn').forEach(btn => { btn.style.display = 'none'; });
   // DB 초기화
   DB=[]; YEARS=[]; metricsMap={}; summaryCache={};
   originalSheetRows=[]; originalHeaders=[];
@@ -460,29 +474,42 @@ async function loadDataFromGAS() {
       renderAll();
       return;
     }
-    // ── 학생DB 변환 (엑셀 rawRows 형식과 동일하게) ──
+
+    // ── 학생DB 변환 ──
     const rawRows = data.students || [];
     originalHeaders = rawRows.length > 0 ? Object.keys(rawRows[0]).map(h => String(h).trim()) : [];
     originalSheetRows = rawRows.map(r => ({...r}));
-    DB = rawRows.map((r, i) => normalizeRow(r, i)).filter(r => r.이름 && r.입학년도);
+
+    // ★ normalizeRow를 한 번에 처리 (반복 filter 제거)
+    DB = [];
+    for (let i = 0; i < rawRows.length; i++) {
+      const r = normalizeRow(rawRows[i], i);
+      if (r.이름 && r.입학년도) DB.push(r);
+    }
     YEARS = [...new Set(DB.map(r => r.입학년도).filter(Boolean))].sort((a,b) => a-b);
 
     // ── 산출식/목표치 변환 ──
     metricsMap = parseMetricsFromGAS(data.metrics || []);
+
+    // ★ summaryCache 전체 연도 미리 계산 (렌더링 시 계산 없음)
     summaryCache = {};
+    for (const yr of YEARS) getSummary(yr);
+
     selStudentIdx = null; selGradIdx = null; gradSearch = ''; gradYear = '전체';
 
     setFileStatus(DB.length ? `구글 시트 연결 완료 · ${DB.length}명` : '데이터 없음', DB.length ? 'ok' : 'warn');
     setLoadBanner(`<strong>구글 스프레드시트</strong> 연동 완료 · 학생 <strong>${fmtNum(DB.length)}명</strong> · 학년도 ${YEARS.join(', ')}`, 'ok', true);
 
-    // 구글 시트 모드에서는 엑셀 관련 버튼 숨김, 새로고침 버튼 표시
+    // 구글 시트 모드 — 엑셀 버튼 숨김
     document.getElementById('export-btn').style.display = 'none';
     document.getElementById('save-direct-btn').style.display = 'none';
     document.getElementById('open-rw-btn').style.display = 'none';
     document.getElementById('pick-file-btn').style.display = 'none';
     document.getElementById('gas-refresh-btn').style.display = '';
 
-    renderAll();
+    // ★ requestAnimationFrame으로 브라우저 페인트 직후 렌더 — 체감 속도 향상
+    requestAnimationFrame(() => renderAll());
+
   } catch(e) {
     setFileStatus('연결 오류','warn');
     setLoadBanner('<strong>구글 시트 연결 오류</strong> — GAS_URL을 확인하거나 잠시 후 다시 시도해주세요.','warn',true);
@@ -699,8 +726,10 @@ const valueLabelPlugin={
   afterDatasetsDraw(chart,args,opts){
     const type=chart.config.type;
     if(type!=='bar') return;
+    if(opts&&opts.display===false) return;
     const {ctx}=chart;
     const indexAxis=chart.options.indexAxis||'x';
+    const isStacked=chart.options.scales?.x?.stacked||chart.options.scales?.y?.stacked;
     const suffix=opts&&opts.suffix?opts.suffix:'명';
     const formatter=opts&&opts.formatter?opts.formatter:(v=>`${v}${suffix}`);
     ctx.save();
@@ -712,17 +741,34 @@ const valueLabelPlugin={
       if(meta.hidden) return;
       meta.data.forEach((bar,i)=>{
         const raw=dataset.data[i];
-        if(raw===null||raw===undefined||raw==='') return;
+        if(raw===null||raw===undefined||raw===''||raw===0) return;
         const text=formatter(raw,i,dataset.label);
-        if(indexAxis==='y'){
-          ctx.textAlign='left';
-          const tx=Math.min(bar.x+8, chart.chartArea.right-26);
-          ctx.fillText(text, tx, bar.y);
-        }
-        else{
-          ctx.textAlign='center';
-          const ty=Math.max(bar.y-10, chart.chartArea.top+10);
-          ctx.fillText(text, bar.x, ty);
+        if(isStacked){
+          // 누적 막대 — 각 구간 중앙에 표시, 너무 좁으면 생략
+          if(indexAxis==='y'){
+            const segW=bar.x-(bar.base||0);
+            if(Math.abs(segW)<28) return;
+            const cx=(bar.x+(bar.base||0))/2;
+            ctx.textAlign='center';
+            ctx.fillText(text,cx,bar.y);
+          } else {
+            const segH=(bar.base||0)-bar.y;
+            if(Math.abs(segH)<18) return;
+            const cy=(bar.y+(bar.base||0))/2;
+            ctx.textAlign='center';
+            ctx.fillText(text,bar.x,cy);
+          }
+        } else {
+          if(indexAxis==='y'){
+            ctx.textAlign='left';
+            // 항상 막대 끝 바깥쪽에만 표시 (막대 안으로 절대 들어가지 않음)
+            ctx.fillStyle=opts&&opts.color?opts.color:'#c8d6e5';
+            ctx.fillText(text, bar.x+8, bar.y);
+          } else {
+            ctx.textAlign='center';
+            const ty=Math.max(bar.y-14, chart.chartArea.top+12);
+            ctx.fillText(text, bar.x, ty);
+          }
         }
       });
     });
@@ -1213,35 +1259,70 @@ function renderOverview(){
     <div class="grid-row grid-overview-top">
       <div class="card">
         <div class="card-title"><span class="dot"></span>취업자 현황</div>
-        <div class="chart-wrap" style="height:230px"><canvas id="c-job"></canvas></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="c-job"></canvas></div>
         <div class="compare-note">대전 내 취업자와 대전 외 취업자를 구분해 표시합니다.</div>
       </div>
       <div class="card">
         <div class="card-title"><span class="dot"></span>진학자 현황</div>
-        <div class="chart-wrap" style="height:230px"><canvas id="c-college"></canvas></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="c-college"></canvas></div>
         <div class="compare-note">대전 내 진학자와 대전 외 진학자를 구분해 표시합니다.</div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="dot"></span>학생 현황</div>
+        <div class="chart-wrap" style="height:220px"><canvas id="c-enrollment"></canvas></div>
+        <div class="compare-note">신입생 · 졸업자 · 중도탈락 인원을 한눈에 비교합니다.</div>
       </div>
       ${overviewMetricCard('거버넌스 참여자 및 핵심관계자 만족도','c-governance',governanceActual,governanceTarget,'두번째 시트에 입력한 실제값과 목표치를 반원형으로 비교합니다.','#ffb740')}
       ${overviewMetricCard('직업기초능력평가 비율','c-vocational',vocationalActual,vocationalTarget,'실제값과 목표치를 반원형으로 비교합니다.','#4da6ff')}
     </div>
-    <div class="grid-row grid-2">
-      <div class="card">
+    <div class="grid-row grid-2" style="align-items:stretch">
+      <div class="card" style="display:flex;flex-direction:column">
         <div class="card-title"><span class="dot"></span>${CY}학년도 학과별 남녀 비율</div>
-        <div class="chart-wrap" style="height:280px"><canvas id="c-gender-dept"></canvas></div>
+        <div class="chart-wrap" style="flex:1;min-height:0"><canvas id="c-gender-dept"></canvas></div>
         <div class="compare-note">학과 순서는 바이오 → 전기 → 건축 → 조리제빵 → 뷰티 계열 기준으로 정렬합니다.</div>
       </div>
-      <div class="card">
-        <div class="card-title"><span class="dot"></span>남녀 비율</div>
-        <div class="donut-wrap" style="height:220px">
-          <canvas id="c-gender-donut"></canvas>
-          <div class="donut-center">
-            <div class="donut-center-val">${fmtNum(d.total)}</div>
-            <div class="donut-center-lbl">전체 학생</div>
+      <div class="card" style="display:flex;flex-direction:column;justify-content:center">
+        <div class="card-title"><span class="dot"></span>남녀 비율 · 진로 현황 · 지역 정주율</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;align-items:start">
+          <!-- 남녀 비율 -->
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;display:flex;align-items:center;gap:5px"><span style="width:5px;height:5px;border-radius:50%;background:var(--teal);display:inline-block"></span>남녀 비율</div>
+            <div class="donut-wrap" style="height:130px">
+              <canvas id="c-gender-donut"></canvas>
+              <div class="donut-center">
+                <div class="donut-center-val" style="font-size:18px">${fmtNum(d.total)}</div>
+                <div class="donut-center-lbl">전체 학생</div>
+              </div>
+            </div>
+            <div class="legend" style="margin-top:6px;justify-content:center">
+              <div class="leg-item"><span class="leg-dot" style="background:#4da6ff"></span>남 ${fmtNum(d.m)}명</div>
+              <div class="leg-item"><span class="leg-dot" style="background:#f472b6"></span>여 ${fmtNum(d.f)}명</div>
+            </div>
           </div>
-        </div>
-        <div class="legend">
-          <div class="leg-item"><span class="leg-dot" style="background:#4da6ff"></span>남 ${fmtNum(d.m)}명</div>
-          <div class="leg-item"><span class="leg-dot" style="background:#f472b6"></span>여 ${fmtNum(d.f)}명</div>
+          <!-- 졸업생 진로 현황 -->
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;display:flex;align-items:center;gap:5px"><span style="width:5px;height:5px;border-radius:50%;background:var(--amber);display:inline-block"></span>졸업생 진로 현황</div>
+            ${d.graduated?`
+            <div class="donut-wrap" style="height:130px">
+              <canvas id="c-career-donut"></canvas>
+              <div class="donut-center">
+                <div class="donut-center-val" style="font-size:18px">${fmtNum(d.graduated)}</div>
+                <div class="donut-center-lbl">졸업생</div>
+              </div>
+            </div>
+            <div class="legend" style="margin-top:6px;justify-content:center">
+              <div class="leg-item"><span class="leg-dot" style="background:rgba(0,212,170,.9)"></span>취업 ${fmtNum(d.employed)}명</div>
+              <div class="leg-item"><span class="leg-dot" style="background:rgba(167,139,250,.9)"></span>진학 ${fmtNum(d.college)}명</div>
+              <div class="leg-item"><span class="leg-dot" style="background:rgba(255,107,107,.9)"></span>미결정 ${fmtNum(d.undecided)}명</div>
+            </div>`:`<div style="height:130px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--text3)">졸업 후 집계</div>`}
+          </div>
+          <!-- 지역 정주율 -->
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;display:flex;align-items:center;gap:5px"><span style="width:5px;height:5px;border-radius:50%;background:var(--green);display:inline-block"></span>지역 정주율</div>
+            ${d.graduated?`
+            <div class="chart-wrap" style="height:130px"><canvas id="c-local-stay-mini"></canvas></div>
+            <div class="compare-note" style="justify-content:center;margin-top:4px">대전 내 취업·진학 / 졸업자 기준</div>`:`<div style="height:130px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--text3)">졸업 후 집계</div>`}
+          </div>
         </div>
       </div>
     </div>
@@ -1250,13 +1331,39 @@ function renderOverview(){
   charts['c-job']=new Chart(document.getElementById('c-job'),{
     type:'bar',
     data:{labels:['대전 내 취업자','대전 외 취업자'],datasets:[{data:[d.localEmploy,d.outerEmploy],backgroundColor:['rgba(0,212,170,.8)','rgba(77,166,255,.82)'],borderRadius:8,maxBarThickness:56}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${c.raw}명`}},valueLabelPlugin:{suffix:'명',color:'#e8edf2'}},scales:{x:{grid:{display:false},ticks:{color:chartTextColor,font:{weight:'700'}}},y:{beginAtZero:true,grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}}}}
+    options:{responsive:true,maintainAspectRatio:false,layout:{padding:{top:24}},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${c.raw}명`}},valueLabelPlugin:{suffix:'명',color:'#e8edf2'}},scales:{x:{grid:{display:false},ticks:{color:chartTextColor,font:{weight:'700'}}},y:{beginAtZero:true,suggestedMax:addAxisPadding([d.localEmploy,d.outerEmploy]),grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}}}}
   });
   destroyChart('c-college');
   charts['c-college']=new Chart(document.getElementById('c-college'),{
     type:'bar',
     data:{labels:['대전 내 진학자','대전 외 진학자'],datasets:[{data:[d.localCollege,d.outerCollege],backgroundColor:['rgba(167,139,250,.82)','rgba(255,183,64,.82)'],borderRadius:8,maxBarThickness:56}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${c.raw}명`}},valueLabelPlugin:{suffix:'명',color:'#e8edf2'}},scales:{x:{grid:{display:false},ticks:{color:chartTextColor,font:{weight:'700'}}},y:{beginAtZero:true,grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}}}}
+    options:{responsive:true,maintainAspectRatio:false,layout:{padding:{top:24}},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${c.raw}명`}},valueLabelPlugin:{suffix:'명',color:'#e8edf2'}},scales:{x:{grid:{display:false},ticks:{color:chartTextColor,font:{weight:'700'}}},y:{beginAtZero:true,suggestedMax:addAxisPadding([d.localCollege,d.outerCollege]),grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}}}}
+  });
+  destroyChart('c-enrollment');
+  charts['c-enrollment']=new Chart(document.getElementById('c-enrollment'),{
+    type:'bar',
+    data:{
+      labels:['신입생','졸업자','중도탈락'],
+      datasets:[{
+        data:[d.total, d.graduated||0, d.dropout],
+        backgroundColor:['rgba(0,212,170,.82)','rgba(77,166,255,.82)','rgba(255,107,107,.82)'],
+        borderRadius:8,
+        maxBarThickness:52
+      }]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      layout:{padding:{top:24}},
+      plugins:{
+        legend:{display:false},
+        tooltip:{callbacks:{label:c=>` ${c.raw}명`}},
+        valueLabelPlugin:{suffix:'명',color:'#e8edf2'}
+      },
+      scales:{
+        x:{grid:{display:false},ticks:{color:chartTextColor,font:{weight:'700',size:11}}},
+        y:{beginAtZero:true,suggestedMax:addAxisPadding([d.total,d.graduated||0,d.dropout]),grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}}
+      }
+    }
   });
   destroyChart('c-governance');
   charts['c-governance']=new Chart(document.getElementById('c-governance'),semiGaugeConfig(governanceActual,governanceTarget,'#ffb740'));
@@ -1268,14 +1375,60 @@ function renderOverview(){
     data:{labels:['남','여'],datasets:[{data:[d.m,d.f],backgroundColor:['#4da6ff','#f472b6'],borderWidth:0,hoverOffset:5}]},
     options:{responsive:true,maintainAspectRatio:false,cutout:'66%',plugins:{legend:{display:false}}}
   });
+  if(d.graduated){
+    destroyChart('c-career-donut');
+    charts['c-career-donut']=new Chart(document.getElementById('c-career-donut'),{
+      type:'doughnut',
+      data:{labels:['취업','진학','미결정'],datasets:[{data:[d.employed,d.college,d.undecided],backgroundColor:['rgba(0,212,170,.9)','rgba(167,139,250,.9)','rgba(255,107,107,.9)'],borderWidth:0,hoverOffset:5}]},
+      options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${c.label} ${c.raw}명 (${d.graduated?((c.raw/d.graduated)*100).toFixed(1):0}%)`}}}}
+    });
+    const localStayActual=metricValue('지역 정주율',CY,'actual');
+    const localStayTarget2=metricValue('지역 정주율',CY,'target');
+    const lsVal=localStayActual!==null?localStayActual:d.localStayRate;
+    destroyChart('c-local-stay-mini');
+    charts['c-local-stay-mini']=new Chart(document.getElementById('c-local-stay-mini'),semiGaugeConfig(lsVal,localStayTarget2,'#4ade80'));
+  }
   destroyChart('c-gender-dept');
+  // 학과별 남녀 비율 — 누적 100% 가로 막대
+  const deptTotal=d.deptLabels.map((k,i)=>(d.deptMale[i]||0)+(d.deptFemale[i]||0));
+  const deptMalePct=d.deptLabels.map((k,i)=>deptTotal[i]?+((d.deptMale[i]/deptTotal[i])*100).toFixed(1):0);
+  const deptFemalePct=d.deptLabels.map((k,i)=>deptTotal[i]?+((d.deptFemale[i]/deptTotal[i])*100).toFixed(1):0);
+  // y축 레이블에 학과명 + 총인원 표시
+  const deptLabelsFull=d.deptLabels.map((k,i)=>`${k} (${deptTotal[i]}명)`);
   charts['c-gender-dept']=new Chart(document.getElementById('c-gender-dept'),{
     type:'bar',
-    data:{labels:d.deptLabels,datasets:[
-      {label:'남',data:d.deptMale,backgroundColor:'rgba(77,166,255,.82)',borderRadius:7,maxBarThickness:28},
-      {label:'여',data:d.deptFemale,backgroundColor:'rgba(244,114,182,.82)',borderRadius:7,maxBarThickness:28}
-    ]},
-    options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{labels:{color:chartTextColor}},tooltip:{callbacks:{label:c=>` ${c.dataset.label} ${c.raw}명`}},valueLabelPlugin:{suffix:'명',color:'#e8edf2'}},scales:{x:{beginAtZero:true,grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}},y:{grid:{display:false},ticks:{color:'#e8edf2'}}}}
+    data:{
+      labels:deptLabelsFull,
+      datasets:[
+        {label:'남',data:deptMalePct,backgroundColor:'rgba(77,166,255,.88)',borderRadius:{topLeft:4,bottomLeft:4,topRight:0,bottomRight:0},stack:'s',categoryPercentage:0.72,barPercentage:1},
+        {label:'여',data:deptFemalePct,backgroundColor:'rgba(244,114,182,.88)',borderRadius:{topLeft:0,bottomLeft:0,topRight:4,bottomRight:4},stack:'s',categoryPercentage:0.72,barPercentage:1}
+      ]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      indexAxis:'y',
+      layout:{padding:{right:8}},
+      plugins:{
+        legend:{labels:{color:chartTextColor,font:{size:12,weight:'700'},boxWidth:10,padding:12}},
+        tooltip:{
+          callbacks:{
+            label:c=>{
+              const i=c.dataIndex;
+              const cnt=c.dataset.label==='남'?d.deptMale[i]:d.deptFemale[i];
+              return ` ${c.dataset.label} ${cnt}명 (${c.raw}%)`;
+            }
+          }
+        },
+        valueLabelPlugin:{
+          formatter:(v,i,lbl)=>`${v}%`,
+          color:'#fff'
+        }
+      },
+      scales:{
+        x:{stacked:true,max:100,beginAtZero:true,grid:{color:chartGrid},ticks:{color:chartTextColor,callback:v=>v+'%'}},
+        y:{stacked:true,grid:{display:false},ticks:{color:'#e8edf2',font:{size:11,weight:'700'}}}
+      }
+    }
   });
 }
 
@@ -1291,8 +1444,6 @@ function renderCareer(){
   }
 
   const deptLabels=d.deptLabels.filter(k=>d.deptMap[k].graduated>0);
-  const deptDisplayLabels=deptLabels.map(k=>`${k}
-${d.deptMap[k].graduated}명`);
 
   const localEmp=deptLabels.map(k=>{
     const rows=d.rows.filter(r=>r.입학학과===k && r.상태==='졸업');
@@ -1317,6 +1468,7 @@ ${d.deptMap[k].graduated}명`);
   const employed=deptLabels.map((k,i)=>(localEmp[i]||0)+(outerEmp[i]||0));
   const college=deptLabels.map((k,i)=>(college2[i]||0)+(college4[i]||0));
   const graduated=deptLabels.map(k=>d.deptMap[k].graduated||0);
+  const deptDisplayLabels=deptLabels.map((k,i)=>`${k} (${graduated[i]}명)`);
 
   const employRateByDept=deptLabels.map((k,i)=>graduated[i]?+((employed[i]/graduated[i])*100).toFixed(1):0);
   const collegeRateByDept=deptLabels.map((k,i)=>graduated[i]?+((college[i]/graduated[i])*100).toFixed(1):0);
@@ -1327,16 +1479,17 @@ ${d.deptMap[k].graduated}명`);
   const maxUndIdx=undecided.reduce((m,v,i,a)=>v>a[m]?i:m,0);
 
   el.innerHTML=`
+    <!-- KPI 행 -->
     <div class="grid-row" style="grid-template-columns:repeat(5,1fr);margin-bottom:14px">
       <div class="kpi clickable" data-preset="employed">
         <div class="kpi-label">취업률</div>
         <div class="kpi-val">${pct(d.employRate)}</div>
-        <div class="kpi-sub">전체 취업 ${fmtNum(d.employed)}명 · 대전 ${fmtNum(d.localEmploy)}명</div>
+        <div class="kpi-sub">전체 ${fmtNum(d.employed)}명 · 대전 ${fmtNum(d.localEmploy)}명</div>
       </div>
       <div class="kpi clickable" data-preset="college">
         <div class="kpi-label">진학률</div>
         <div class="kpi-val">${pct(d.collegeRate)}</div>
-        <div class="kpi-sub">전체 진학 ${fmtNum(d.college)}명 · 전문대 ${fmtNum(d.college2)}명</div>
+        <div class="kpi-sub">전체 ${fmtNum(d.college)}명 · 전문대 ${fmtNum(d.college2)}명</div>
       </div>
       <div class="kpi clickable" data-preset="undecided">
         <div class="kpi-label">미결정률</div>
@@ -1349,102 +1502,106 @@ ${d.deptMap[k].graduated}명`);
         <div class="kpi-sub">대전 취업 + 지역 진학 기준</div>
       </div>
       <div class="kpi">
-        <div class="kpi-label">집중 관리 포인트</div>
-        <div class="kpi-val" style="font-size:16px;line-height:1.3">${escapeHtml(deptLabels[maxUndIdx]||'-')}</div>
-        <div class="kpi-sub">미결정 ${fmtNum(undecided[maxUndIdx]||0)}명 · 최고 취업 ${escapeHtml(deptLabels[maxEmpIdx]||'-')}</div>
+        <div class="kpi-label">집중 관리</div>
+        <div class="kpi-val" style="font-size:15px;line-height:1.3">${escapeHtml(deptLabels[maxUndIdx]||'-')}</div>
+        <div class="kpi-sub">미결정 ${fmtNum(undecided[maxUndIdx]||0)}명 최다</div>
       </div>
     </div>
 
-    <div class="grid-row grid-3">
-      <div class="card">
-        <div class="card-title"><span class="dot"></span>학과별 진로 구성비</div>
-        <div class="chart-wrap" style="height:360px"><canvas id="c-career-mix"></canvas></div>
-        <div class="compare-note">학과별 졸업생을 100% 기준으로 취업 · 진학 · 미결정 비율로 비교합니다.</div>
+    <!-- 메인 2열: 진로 구성비 + 핵심 요약표 -->
+    <div class="grid-row grid-2" style="align-items:stretch;margin-bottom:14px">
+      <div class="card" style="display:flex;flex-direction:column">
+        <div class="card-title"><span class="dot"></span>학과별 진로 구성비 <span style="font-size:10px;color:var(--text3);font-weight:500;margin-left:4px">졸업생 100% 기준</span></div>
+        <div class="chart-wrap" style="flex:1;min-height:240px"><canvas id="c-career-mix"></canvas></div>
+        <div class="compare-note">각 막대 안의 색상 폭이 취업(초록) · 진학(보라) · 미결정(빨강) 비율을 나타냅니다.</div>
       </div>
-      <div class="card">
-        <div class="card-title"><span class="dot"></span>학과별 취업 상세</div>
-        <div class="chart-wrap" style="height:360px"><canvas id="c-career-employ-dept"></canvas></div>
-        <div class="compare-note">대전 취업과 대전 외 취업을 학과별로 구분합니다.</div>
-      </div>
-      <div class="card">
-        <div class="card-title"><span class="dot"></span>학과별 진학 상세</div>
-        <div class="chart-wrap" style="height:360px"><canvas id="c-career-college-dept"></canvas></div>
-        <div class="compare-note">전문대와 4년제 진학을 학과별로 구분합니다.</div>
-      </div>
-    </div>
-
-    <div class="grid-row grid-2">
-      <div class="card">
-        <div class="card-title"><span class="dot"></span>미결정 관리 현황</div>
-        <div class="chart-wrap" style="height:300px"><canvas id="c-career-undecided-dept"></canvas></div>
-        <div class="compare-note">졸업생 중 진로 미결정 학생 수를 학과별로 표시합니다.</div>
-      </div>
-      <div class="card">
-        <div class="card-title"><span class="dot"></span>학과별 핵심 판단 요약</div>
-        <div class="metrics-table-wrap">
-          <table class="metrics-table">
+      <div class="card" style="display:flex;flex-direction:column">
+        <div class="card-title"><span class="dot"></span>학과별 핵심 지표 요약</div>
+        <div style="flex:1;overflow:auto">
+          <table class="metrics-table" style="width:100%">
             <thead>
               <tr>
                 <th>학과</th>
-                <th>졸업생</th>
-                <th>취업률</th>
-                <th>진학률</th>
-                <th>미결정률</th>
-                <th>지역정주율</th>
+                <th style="text-align:right">졸업생</th>
+                <th style="text-align:right">취업률</th>
+                <th style="text-align:right">진학률</th>
+                <th style="text-align:right">미결정률</th>
+                <th style="text-align:right">정주율</th>
               </tr>
             </thead>
             <tbody>
-              ${deptLabels.map((k,i)=>`
-                <tr>
-                  <td>${escapeHtml(k)} <span style="color:var(--text3);font-size:10px">(${graduated[i]}명)</span></td>
-                  <td>${fmtNum(graduated[i])}명</td>
-                  <td>${employRateByDept[i]}%</td>
-                  <td>${collegeRateByDept[i]}%</td>
-                  <td>${undecidedRateByDept[i]}%</td>
-                  <td>${localStayByDept[i]}%</td>
-                </tr>
-              `).join('')}
+              ${deptLabels.map((k,i)=>{
+                const empR=employRateByDept[i];
+                const undR=undecidedRateByDept[i];
+                const empCls=empR>=50?'color:var(--teal)':empR>=30?'color:var(--amber)':'color:var(--coral)';
+                const undCls=undR>=20?'color:var(--coral)':undR>=10?'color:var(--amber)':'color:var(--green)';
+                return `<tr>
+                  <td style="font-weight:700">${escapeHtml(k)}</td>
+                  <td style="text-align:right;color:var(--text2)">${fmtNum(graduated[i])}명</td>
+                  <td style="text-align:right;font-weight:800;${empCls}">${empR}%</td>
+                  <td style="text-align:right;color:var(--purple)">${collegeRateByDept[i]}%</td>
+                  <td style="text-align:right;font-weight:800;${undCls}">${undR}%</td>
+                  <td style="text-align:right;color:var(--text2)">${localStayByDept[i]}%</td>
+                </tr>`;
+              }).join('')}
             </tbody>
           </table>
+        </div>
+        <div class="compare-note" style="margin-top:10px">
+          <span style="color:var(--teal)">■</span> 취업률 50%↑&nbsp;
+          <span style="color:var(--amber)">■</span> 30~50%&nbsp;
+          <span style="color:var(--coral)">■</span> 30%↓ &nbsp;·&nbsp;
+          <span style="color:var(--coral)">■</span> 미결정 20%↑ 주의
         </div>
       </div>
     </div>
 
+    <!-- 하단 3열: 취업 상세 / 진학 상세 / 미결정 -->
+    <div class="grid-row grid-3" style="margin-bottom:14px">
+      <div class="card">
+        <div class="card-title"><span class="dot" style="background:var(--teal)"></span>취업 상세 <span style="font-size:10px;color:var(--text3);font-weight:500;margin-left:4px">대전 내 / 외</span></div>
+        <div class="chart-wrap" style="height:260px"><canvas id="c-career-employ-dept"></canvas></div>
+        <div class="compare-note">대전 내 취업(초록)과 대전 외 취업(파랑)을 학과별로 구분합니다.</div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="dot" style="background:var(--purple)"></span>진학 상세 <span style="font-size:10px;color:var(--text3);font-weight:500;margin-left:4px">전문대 / 4년제</span></div>
+        <div class="chart-wrap" style="height:260px"><canvas id="c-career-college-dept"></canvas></div>
+        <div class="compare-note">전문대(노랑)와 4년제(보라) 진학을 학과별로 구분합니다.</div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="dot" style="background:var(--coral)"></span>미결정 현황 <span style="font-size:10px;color:var(--text3);font-weight:500;margin-left:4px">명수 기준</span></div>
+        <div class="chart-wrap" style="height:260px"><canvas id="c-career-undecided-dept"></canvas></div>
+        <div class="compare-note">진로 미결정 학생 수가 많은 학과를 한눈에 파악합니다.</div>
+      </div>
+    </div>
+
+    <!-- 종합표 -->
     <div class="card">
       <div class="card-title"><span class="dot"></span>${CY}학년도 학과별 취업 · 진학 · 미결정 종합표</div>
-      <div class="metrics-note" style="margin-bottom:10px">성과지표 계산은 유지하고, 학과별 세부 현황과 결과를 한 화면에서 바로 비교할 수 있도록 정리했습니다.</div>
+      <div class="metrics-note" style="margin-bottom:10px">학과별 세부 현황과 결과를 한 화면에서 바로 비교합니다.</div>
       <div class="metrics-table-wrap">
         <table class="metrics-table">
           <thead>
             <tr>
-              <th>학과</th>
-              <th>졸업생</th>
-              <th>대전 취업</th>
-              <th>대전 외 취업</th>
-              <th>전문대</th>
-              <th>4년제</th>
-              <th>미결정</th>
-              <th>취업률</th>
-              <th>진학률</th>
-              <th>미결정률</th>
+              <th>학과</th><th>졸업생</th><th>대전 취업</th><th>대전 외 취업</th>
+              <th>전문대</th><th>4년제</th><th>미결정</th>
+              <th>취업률</th><th>진학률</th><th>미결정률</th>
             </tr>
           </thead>
           <tbody>
-            ${deptLabels.map((k, i)=>{
+            ${deptLabels.map((k,i)=>{
               const empRate=graduated[i]?((employed[i]/graduated[i])*100).toFixed(1):'0.0';
               const colRate=graduated[i]?((college[i]/graduated[i])*100).toFixed(1):'0.0';
               const undRate=graduated[i]?((undecided[i]/graduated[i])*100).toFixed(1):'0.0';
               return `<tr>
-                <td>${escapeHtml(k)} <span style="color:var(--text3);font-size:10px">(${graduated[i]}명)</span></td>
+                <td style="font-weight:700">${escapeHtml(k)} <span style="color:var(--text3);font-size:10px">(${graduated[i]}명)</span></td>
                 <td>${fmtNum(graduated[i])}명</td>
-                <td>${fmtNum(localEmp[i])}명</td>
-                <td>${fmtNum(outerEmp[i])}명</td>
-                <td>${fmtNum(college2[i])}명</td>
-                <td>${fmtNum(college4[i])}명</td>
-                <td>${fmtNum(undecided[i])}명</td>
-                <td>${empRate}%</td>
+                <td>${fmtNum(localEmp[i])}명</td><td>${fmtNum(outerEmp[i])}명</td>
+                <td>${fmtNum(college2[i])}명</td><td>${fmtNum(college4[i])}명</td>
+                <td style="color:${undecided[i]>=5?'var(--coral)':'var(--text)'}">${fmtNum(undecided[i])}명</td>
+                <td style="font-weight:700">${empRate}%</td>
                 <td>${colRate}%</td>
-                <td>${undRate}%</td>
+                <td style="color:${parseFloat(undRate)>=20?'var(--coral)':'var(--text)'}">${undRate}%</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -1457,23 +1614,26 @@ ${d.deptMap[k].graduated}명`);
   charts['c-career-mix']=new Chart(document.getElementById('c-career-mix'),{
     type:'bar',
     data:{
-      labels:deptDisplayLabels,
+      labels:deptLabels,
       datasets:[
-        {label:'취업',data:employRateByDept,backgroundColor:'rgba(0,212,170,.82)',borderRadius:5,maxBarThickness:28},
-        {label:'진학',data:collegeRateByDept,backgroundColor:'rgba(167,139,250,.82)',borderRadius:5,maxBarThickness:28},
-        {label:'미결정',data:undecidedRateByDept,backgroundColor:'rgba(255,107,107,.82)',borderRadius:5,maxBarThickness:28}
+        {label:'취업',data:employRateByDept,backgroundColor:'rgba(0,212,170,.85)',stack:'s',categoryPercentage:0.7,barPercentage:1},
+        {label:'진학',data:collegeRateByDept,backgroundColor:'rgba(167,139,250,.85)',stack:'s',categoryPercentage:0.7,barPercentage:1},
+        {label:'미결정',data:undecidedRateByDept,backgroundColor:'rgba(255,107,107,.85)',stack:'s',categoryPercentage:0.7,barPercentage:1}
       ]
     },
     options:{
       responsive:true,maintainAspectRatio:false,indexAxis:'y',
       plugins:{
-        legend:{labels:{color:chartTextColor}},
-        tooltip:{callbacks:{label:c=>` ${c.dataset.label} ${c.raw}%`}},
-        valueLabelPlugin:{display:false}
+        legend:{labels:{color:chartTextColor,font:{size:11,weight:'700'},boxWidth:10,padding:10}},
+        tooltip:{callbacks:{
+          title:items=>`${items[0].label} (${graduated[items[0].dataIndex]}명)`,
+          label:c=>` ${c.dataset.label} ${c.raw}%`
+        }},
+        valueLabelPlugin:{formatter:(v)=>`${v}%`,color:'#fff'}
       },
       scales:{
         x:{stacked:true,beginAtZero:true,max:100,grid:{color:chartGrid},ticks:{color:chartTextColor,callback:v=>v+'%'}},
-        y:{stacked:true,grid:{display:false},ticks:{color:'#e8edf2',font:{size:11}}}
+        y:{stacked:true,grid:{display:false},ticks:{color:'#e8edf2',font:{size:11,weight:'700'}}}
       }
     }
   });
@@ -1484,20 +1644,21 @@ ${d.deptMap[k].graduated}명`);
     data:{
       labels:deptDisplayLabels,
       datasets:[
-        {label:'대전 취업',data:localEmp,backgroundColor:'rgba(0,212,170,.82)',borderRadius:7,maxBarThickness:26},
-        {label:'대전 외 취업',data:outerEmp,backgroundColor:'rgba(77,166,255,.82)',borderRadius:7,maxBarThickness:26}
+        {label:'대전 취업',data:localEmp,backgroundColor:'rgba(0,212,170,.85)',borderRadius:5,maxBarThickness:22},
+        {label:'대전 외 취업',data:outerEmp,backgroundColor:'rgba(77,166,255,.85)',borderRadius:5,maxBarThickness:22}
       ]
     },
     options:{
       responsive:true,maintainAspectRatio:false,indexAxis:'y',
+      layout:{padding:{right:52}},
       plugins:{
-        legend:{labels:{color:chartTextColor}},
+        legend:{labels:{color:chartTextColor,font:{size:12,weight:'700'},boxWidth:10,padding:10}},
         tooltip:{callbacks:{label:c=>` ${c.dataset.label} ${c.raw}명`}},
-        valueLabelPlugin:{suffix:'명',color:'#e8edf2'}
+        valueLabelPlugin:{suffix:'명',color:'#c8d6e5'}
       },
       scales:{
-        x:{beginAtZero:true,grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}},
-        y:{grid:{display:false},ticks:{color:'#e8edf2',font:{size:11}}}
+        x:{beginAtZero:true,suggestedMax:addAxisPadding(localEmp.concat(outerEmp)),grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}},
+        y:{grid:{display:false},ticks:{color:'#e8edf2',font:{size:13,weight:'700'}}}
       }
     }
   });
@@ -1508,20 +1669,21 @@ ${d.deptMap[k].graduated}명`);
     data:{
       labels:deptDisplayLabels,
       datasets:[
-        {label:'전문대',data:college2,backgroundColor:'rgba(255,183,64,.82)',borderRadius:7,maxBarThickness:26},
-        {label:'4년제',data:college4,backgroundColor:'rgba(167,139,250,.82)',borderRadius:7,maxBarThickness:26}
+        {label:'전문대',data:college2,backgroundColor:'rgba(255,183,64,.85)',borderRadius:5,maxBarThickness:22},
+        {label:'4년제',data:college4,backgroundColor:'rgba(167,139,250,.85)',borderRadius:5,maxBarThickness:22}
       ]
     },
     options:{
       responsive:true,maintainAspectRatio:false,indexAxis:'y',
+      layout:{padding:{right:52}},
       plugins:{
-        legend:{labels:{color:chartTextColor}},
+        legend:{labels:{color:chartTextColor,font:{size:12,weight:'700'},boxWidth:10,padding:10}},
         tooltip:{callbacks:{label:c=>` ${c.dataset.label} ${c.raw}명`}},
-        valueLabelPlugin:{suffix:'명',color:'#e8edf2'}
+        valueLabelPlugin:{suffix:'명',color:'#c8d6e5'}
       },
       scales:{
-        x:{beginAtZero:true,grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}},
-        y:{grid:{display:false},ticks:{color:'#e8edf2',font:{size:11}}}
+        x:{beginAtZero:true,suggestedMax:addAxisPadding(college2.concat(college4)),grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}},
+        y:{grid:{display:false},ticks:{color:'#e8edf2',font:{size:13,weight:'700'}}}
       }
     }
   });
@@ -1548,19 +1710,20 @@ ${d.deptMap[k].graduated}명`);
     data:{
       labels:deptDisplayLabels,
       datasets:[
-        {label:'미결정',data:undecided,backgroundColor:'rgba(255,107,107,.82)',borderRadius:7,maxBarThickness:26}
+        {label:'미결정',data:undecided,backgroundColor:undecided.map(v=>v>=5?'rgba(255,107,107,.9)':'rgba(255,183,64,.82)'),borderRadius:5,maxBarThickness:22}
       ]
     },
     options:{
       responsive:true,maintainAspectRatio:false,indexAxis:'y',
+      layout:{padding:{right:52}},
       plugins:{
-        legend:{labels:{color:chartTextColor}},
-        tooltip:{callbacks:{label:c=>` ${c.raw}명`}},
-        valueLabelPlugin:{suffix:'명',color:'#e8edf2'}
+        legend:{display:false},
+        tooltip:{callbacks:{label:c=>` 미결정 ${c.raw}명`}},
+        valueLabelPlugin:{suffix:'명',color:'#c8d6e5'}
       },
       scales:{
-        x:{beginAtZero:true,grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}},
-        y:{grid:{display:false},ticks:{color:'#e8edf2',font:{size:11}}}
+        x:{beginAtZero:true,suggestedMax:addAxisPadding(undecided),grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}},
+        y:{grid:{display:false},ticks:{color:'#e8edf2',font:{size:13,weight:'700'}}}
       }
     }
   });
@@ -2110,17 +2273,27 @@ async function loadWorkbookFromArrayBuffer(buffer,name=''){
   const rawAoa=XLSX.utils.sheet_to_json(dbSheet,{header:1,defval:''});
   originalHeaders=(rawAoa[0]||[]).map(v=>String(v||'').trim());
   originalSheetRows=rawRows.map(r=>({...r}));
-  DB=rawRows.map((r,i)=>normalizeRow(r,i)).filter(r=>r.이름&&r.입학년도);
+
+  // ★ 한 번에 파싱
+  DB = [];
+  for (let i = 0; i < rawRows.length; i++) {
+    const r = normalizeRow(rawRows[i], i);
+    if (r.이름 && r.입학년도) DB.push(r);
+  }
   YEARS=[...new Set(DB.map(r=>r.입학년도).filter(Boolean))].sort((a,b)=>a-b);
   metricsMap=targetSheet?parseMetrics(targetSheet):{};
+
+  // ★ summaryCache 미리 계산
   summaryCache={};
+  for (const yr of YEARS) getSummary(yr);
+
   selStudentIdx=null; selGradIdx=null; gradSearch=''; gradYear='전체';
   workbookName=name||workbookName||DEFAULT_XLSX;
   setFileStatus(DB.length?`엑셀 연결 완료 · ${workbookName}`:'데이터 없음',DB.length?'ok':'warn');
   setLoadBanner(`<strong>${escapeHtml(workbookName)}</strong> 불러오기 완료 · 학생 ${fmtNum(DB.length)}명 · 데이터 학년도 ${YEARS.join(', ')} · 목표치는 2번째 시트 기준`,'ok',true);
   if(DB.length) document.getElementById('export-btn').style.display='';
   document.getElementById('save-direct-btn').style.display = canDirectWrite ? '' : 'none';
-  renderAll();
+  requestAnimationFrame(() => renderAll());
 }
 async function tryAutoLoadDefaultFile(){
   // 구글 시트 모드에서는 사용하지 않음 — loadDataFromGAS()가 대신 처리
