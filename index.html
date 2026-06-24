@@ -63,7 +63,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--navy);color:var(--te
 .load-banner{margin:0 24px 8px;border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:12px;color:var(--text2);display:none}
 .load-banner.ok{background:rgba(74,222,128,.08);border-color:rgba(74,222,128,.18)}
 .load-banner.warn{background:rgba(255,183,64,.08);border-color:rgba(255,183,64,.18)}
-.kpi-row{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:18px}
+.kpi-row{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin-bottom:18px}
 .kpi{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 14px 12px;position:relative;overflow:hidden}
 .kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--teal)}
 .kpi.clickable{cursor:pointer;transition:transform .15s,border-color .15s,box-shadow .15s}
@@ -880,6 +880,39 @@ async function saveWorkbookToOriginal(){
   }
 }
 
+/* 중도탈락 일자(K열)에서 '중도탈락 년도'를 추출.
+   허용 형식: 2024-03-15, 2024.3.15, 2024/3/15, 2024년 3월 15일,
+   "2024", 엑셀 날짜 일련번호(숫자) 등 */
+function parseDropoutYear(v){
+  if(v===null||v===undefined||v==='') return null;
+  // 엑셀 날짜 일련번호 (숫자) 처리
+  if(typeof v==='number' && isFinite(v)){
+    // 5자리 이상이면 엑셀 날짜 일련번호로 간주
+    if(v>1000 && v<60000){
+      const epoch=new Date(Date.UTC(1899,11,30));
+      const d=new Date(epoch.getTime()+v*86400000);
+      const y=d.getUTCFullYear();
+      if(y>=1990 && y<=2100) return y;
+    }
+    // 그냥 연도 숫자(예: 2024)
+    if(v>=1990 && v<=2100) return Math.trunc(v);
+  }
+  const s=String(v).trim();
+  if(!s) return null;
+  // 문자열에서 4자리 연도(19xx~20xx) 추출
+  const m=s.match(/(19|20)\d{2}/);
+  if(m){
+    const y=parseInt(m[0],10);
+    if(y>=1990 && y<=2100) return y;
+  }
+  // 날짜 파싱 시도
+  const d=new Date(s);
+  if(!isNaN(d.getTime())){
+    const y=d.getFullYear();
+    if(y>=1990 && y<=2100) return y;
+  }
+  return null;
+}
 function normalizeRow(raw, rowIndex=-1){
   const row={};Object.keys(raw||{}).forEach(k=>row[String(k).trim()]=raw[k]);
   return {
@@ -893,6 +926,11 @@ function normalizeRow(raw, rowIndex=-1){
     중학교내신:toNumber(row['중학교내신']),
     입학학과:String(row['입학학과']||'미지정').trim()||'미지정',
     상태:String(row['상태']||'').trim(),
+    중도탈락일자:String(row['중도탈락일자']||row['중도탈락 일자']||row['중도탈락일']||'').trim(),
+    중도탈락년도:parseDropoutYear(row['중도탈락일자']||row['중도탈락 일자']||row['중도탈락일']||''),
+    // 이탈(중도탈락·전학) 일자 — K열을 공통으로 사용. 전학 전용 일자 열이 있으면 우선.
+    이탈일자:String(row['중도탈락일자']||row['중도탈락 일자']||row['중도탈락일']||row['전학일자']||row['전학 일자']||'').trim(),
+    이탈년도:parseDropoutYear(row['중도탈락일자']||row['중도탈락 일자']||row['중도탈락일']||row['전학일자']||row['전학 일자']||''),
     졸업여부:String(row['졸업여부']||'').trim(),
     졸업년도:toInt(row['졸업년도']),
     진로유형:String(row['진로유형']||'').trim(),
@@ -933,7 +971,9 @@ function targetCompare(actual,target,higherIsBetter=true){
   const diff=actual-target;
   if(Math.abs(diff)<0.05) return {label:'목표와 동일',cls:'goal-flat'};
   const ok=higherIsBetter?diff>=0:diff<=0;
-  return {label:`${ok?'목표 달성':'목표 미달'} ${Math.abs(diff).toFixed(1)}%`,cls:ok?'goal-good':'goal-warn'};
+  // 낮을수록 좋은 지표(중도탈락률 등): 목표 이하면 달성, 초과하면 '목표 초과'
+  const failLabel=higherIsBetter?'목표 미달':'목표 초과';
+  return {label:`${ok?'목표 달성':failLabel} ${Math.abs(diff).toFixed(1)}%`,cls:ok?'goal-good':'goal-warn'};
 }
 function normalizeMetricName(name){return String(name||'').replace(/\s+/g,'').trim();}
 function metricAliases(metric){
@@ -988,6 +1028,7 @@ function syncRowToOriginal(r){
   o['중학교내신']=r.중학교내신??'';
   o['입학학과']=r.입학학과||'';
   o['상태']=r.상태||'';
+  o['중도탈락일자']=r.중도탈락일자||'';
   o['졸업여부']=r.졸업여부||'';
   o['졸업년도']=r.졸업년도??'';
   o['진로유형']=r.진로유형||'';
@@ -1054,8 +1095,51 @@ function getSummary(year){
   const total=rows.length;
   const m=rows.filter(r=>r.성별==='남').length;
   const f=rows.filter(r=>r.성별==='여').length;
-  const dropout=rows.filter(r=>r.상태==='중도탈락').length;
   const graduated=grads.length;
+
+  /* ★ 재학생 인원(1·2·3학년 전체) 집계 — '선택 연도 Y에 재학 중이던' 학생 기준
+     - 1학년=입학 Y, 2학년=입학 Y-1, 3학년=입학 Y-2
+     - 중도탈락·전학으로 'Y 이전 연도'에 이탈한 학생은 총원에서 제외
+     - 'Y 연도'에 이탈한 학생은 총원에 포함(중도탈락/전학자로 집계)
+     - Y-1·Y-2 코호트가 현재 '졸업' 상태여도, 선택 연도 Y에는 재학 중이었으므로 포함
+       (Y년도의 재학생 스냅샷을 보여주는 것이 목적) */
+  const ENROLL_STATUSES_LEAVE=['중도탈락','전학'];
+  const cohortYears=[year,year-1,year-2]; // [1학년,2학년,3학년]
+  const enrollAll=DB.filter(r=>cohortYears.includes(r.입학년도));
+  const enrollKept=enrollAll.filter(r=>{
+    if(ENROLL_STATUSES_LEAVE.includes(r.상태)){
+      // 이탈 연도 (없으면 입학년도로 보조)
+      const ly=(r.이탈년도!==null&&r.이탈년도!==undefined)?r.이탈년도:r.입학년도;
+      // Y 이전에 이탈 → 제외, Y에 이탈 → 포함
+      return ly>=year;
+    }
+    // 졸업/재학 등은 모두 Y년도에 재학 중이던 학생이므로 포함
+    return true;
+  });
+  // 학년별 인원 (1·2·3학년)
+  const gradeCounts={};
+  [1,2,3].forEach((g,i)=>{
+    gradeCounts[g]=enrollKept.filter(r=>r.입학년도===cohortYears[i]).length;
+  });
+  // 올해 이탈자(중도탈락+전학) — 총원에 포함되며 별도 집계
+  const leftThisYear=enrollKept.filter(r=>ENROLL_STATUSES_LEAVE.includes(r.상태));
+  const dropoutThisYear=leftThisYear.filter(r=>r.상태==='중도탈락');
+  const transferThisYear=leftThisYear.filter(r=>r.상태==='전학');
+  // 현재 재학생(이탈자 제외)
+  const activeRows=enrollKept.filter(r=>!ENROLL_STATUSES_LEAVE.includes(r.상태));
+  const enrollTotal=enrollKept.length;          // 1·2·3학년 전체 총원(올해 이탈자 포함)
+  const enrollActive=activeRows.length;         // 순수 재학생
+  const enrollDropout=dropoutThisYear.length;   // 올해 중도탈락
+  const enrollTransfer=transferThisYear.length; // 올해 전학
+  const enrollMale=enrollKept.filter(r=>r.성별==='남').length;
+  const enrollFemale=enrollKept.filter(r=>r.성별==='여').length;
+
+  // ★ 종합현황의 '중도탈락' = 1·2·3학년 코호트 중 올해(Y) 중도탈락한 학생
+  const dropoutRows=dropoutThisYear;
+  const dropout=dropoutRows.length;
+  // ★ 중도탈락률 분모 = 1·2·3학년 전체 재학생 총원(올해 이탈자 포함)
+  const dropoutRate=enrollTotal?dropout/enrollTotal*100:0;
+
   const employed=grads.filter(r=>r.진로유형==='취업').length;
   const localEmploy=grads.filter(r=>r.진로유형==='취업'&&r.지역==='대전').length;
   const outerEmploy=employed-localEmploy;
@@ -1067,7 +1151,6 @@ function getSummary(year){
   const undecided=grads.filter(r=>r.진로유형==='미결정').length;
   const localStay=localEmploy+localCollege;
   const recruitRate=total?total/QUOTA*100:0;
-  const dropoutRate=total?dropout/total*100:0;
   const undecidedRate=graduated?undecided/graduated*100:0;
   const localStayRate=graduated?localStay/graduated*100:0;
   const ms={};
@@ -1092,7 +1175,8 @@ function getSummary(year){
   const deptEmployRate=deptLabels.map(k=>deptMap[k].graduated?+(deptMap[k].employed/deptMap[k].graduated*100).toFixed(1):null);
   const deptCollegeRate=deptLabels.map(k=>deptMap[k].graduated?+(deptMap[k].college/deptMap[k].graduated*100).toFixed(1):null);
   const deptUndecidedRate=deptLabels.map(k=>deptMap[k].graduated?+(deptMap[k].undecided/deptMap[k].graduated*100).toFixed(1):null);
-  const summary={year,rows,total,m,f,dropout,graduated,employed,localEmploy,outerEmploy,college,college4,college2,localCollege,outerCollege,undecided,localStay,recruitRate,dropoutRate,undecidedRate,localStayRate,employRate:graduated?employed/graduated*100:0,localEmployRate:employed?localEmploy/employed*100:0,collegeRate:graduated?college/graduated*100:0,localCollegeRate:college?localCollege/college*100:0,ms,deptLabels,deptMale,deptFemale,deptEmployRate,deptCollegeRate,deptUndecidedRate,deptMap};
+  const summary={year,rows,total,m,f,dropout,dropoutRows,graduated,employed,localEmploy,outerEmploy,college,college4,college2,localCollege,outerCollege,undecided,localStay,recruitRate,dropoutRate,undecidedRate,localStayRate,employRate:graduated?employed/graduated*100:0,localEmployRate:employed?localEmploy/employed*100:0,collegeRate:graduated?college/graduated*100:0,localCollegeRate:college?localCollege/college*100:0,ms,deptLabels,deptMale,deptFemale,deptEmployRate,deptCollegeRate,deptUndecidedRate,deptMap,
+    cohortYears,enrollTotal,enrollActive,enrollDropout,enrollTransfer,enrollMale,enrollFemale,gradeCounts,activeRows,dropoutThisYear,transferThisYear,leftThisYear};
   summaryCache[year]=summary;
   return summary;
 }
@@ -1215,20 +1299,25 @@ function renderOverview(){
   const el=document.getElementById('tab-overview');
   el.innerHTML=`
     <div class="kpi-row">
-      <div class="kpi">
+      <div class="kpi clickable" data-preset="recruit">
         <div class="kpi-label">신입생 충원율</div>
         <div class="kpi-val">${pct(d.recruitRate)}</div>
-        <div class="kpi-sub">${fmtNum(d.total)} / ${QUOTA}명</div>
+        <div class="kpi-sub">${fmtNum(d.total)} / ${QUOTA}명 · 클릭 시 명단</div>
       </div>
-      <div class="kpi">
+      <div class="kpi clickable" data-preset="graduated">
         <div class="kpi-label">졸업자</div>
         <div class="kpi-val">${d.graduated?fmtNum(d.graduated)+'명':'-'}</div>
-        <div class="kpi-sub">${d.graduated?'졸업 완료':'재학 중'}</div>
+        <div class="kpi-sub">${d.graduated?'졸업 완료 · 클릭 시 명단':'재학 중'}</div>
       </div>
-      <div class="kpi">
+      <div class="kpi clickable" data-preset="enrolled">
+        <div class="kpi-label">재학생 (1·2·3학년)</div>
+        <div class="kpi-val">${fmtNum(d.enrollActive)}명</div>
+        <div class="kpi-sub">1학년 ${fmtNum(d.gradeCounts[1])} · 2학년 ${fmtNum(d.gradeCounts[2])} · 3학년 ${fmtNum(d.gradeCounts[3])}<br>총원 ${fmtNum(d.enrollTotal)}명 (올해 이탈 ${fmtNum(d.enrollDropout+d.enrollTransfer)}명 포함)</div>
+      </div>
+      <div class="kpi clickable" data-preset="dropout">
         <div class="kpi-label">중도탈락</div>
         <div class="kpi-val">${fmtNum(d.dropout)}명</div>
-        <div class="kpi-sub">중도탈락률 ${pct(d.dropoutRate)}</div>
+        <div class="kpi-sub">중도탈락률 ${pct(d.dropoutRate)} · 총원 ${fmtNum(d.enrollTotal)}명 기준<br>클릭 시 명단</div>
         ${kpiTargetHtml(d.dropoutRate,dropoutTarget,false)}
       </div>
       <div class="kpi clickable" data-preset="local-stay">
@@ -1249,10 +1338,10 @@ function renderOverview(){
         <div class="kpi-sub">두번째 시트 기준 입력값 반영</div>
         ${kpiTargetHtml(vocationalActual,vocationalTarget,true)}
       </div>
-      <div class="kpi">
+      <div class="kpi clickable" data-preset="employed">
         <div class="kpi-label">순 취업률</div>
         <div class="kpi-val">${d.graduated?pct(d.employRate):'-'}</div>
-        <div class="kpi-sub">취업 ${fmtNum(d.employed)}명</div>
+        <div class="kpi-sub">취업 ${fmtNum(d.employed)}명${d.graduated?' · 클릭 시 명단':''}</div>
         ${kpiTargetHtml(d.employRate,metricValue('순 취업률',CY,'target'),true)}
       </div>
     </div>
@@ -1268,9 +1357,9 @@ function renderOverview(){
         <div class="compare-note">대전 내 진학자와 대전 외 진학자를 구분해 표시합니다.</div>
       </div>
       <div class="card">
-        <div class="card-title"><span class="dot"></span>학생 현황</div>
+        <div class="card-title"><span class="dot"></span>학생 현황 (1·2·3학년)</div>
         <div class="chart-wrap" style="height:220px"><canvas id="c-enrollment"></canvas></div>
-        <div class="compare-note">신입생 · 졸업자 · 중도탈락 인원을 한눈에 비교합니다.</div>
+        <div class="compare-note">학년별 재학생과 올해 중도탈락·전학 인원을 비교합니다. (중도탈락 막대 클릭 시 명단)</div>
       </div>
       ${overviewMetricCard('거버넌스 참여자 및 핵심관계자 만족도','c-governance',governanceActual,governanceTarget,'두번째 시트에 입력한 실제값과 목표치를 반원형으로 비교합니다.','#ffb740')}
       ${overviewMetricCard('직업기초능력평가 비율','c-vocational',vocationalActual,vocationalTarget,'실제값과 목표치를 반원형으로 비교합니다.','#4da6ff')}
@@ -1290,13 +1379,13 @@ function renderOverview(){
             <div class="donut-wrap" style="height:130px">
               <canvas id="c-gender-donut"></canvas>
               <div class="donut-center">
-                <div class="donut-center-val" style="font-size:18px">${fmtNum(d.total)}</div>
-                <div class="donut-center-lbl">전체 학생</div>
+                <div class="donut-center-val" style="font-size:18px">${fmtNum(d.enrollTotal)}</div>
+                <div class="donut-center-lbl">재학생 총원</div>
               </div>
             </div>
             <div class="legend" style="margin-top:6px;justify-content:center">
-              <div class="leg-item"><span class="leg-dot" style="background:#4da6ff"></span>남 ${fmtNum(d.m)}명</div>
-              <div class="leg-item"><span class="leg-dot" style="background:#f472b6"></span>여 ${fmtNum(d.f)}명</div>
+              <div class="leg-item"><span class="leg-dot" style="background:#4da6ff"></span>남 ${fmtNum(d.enrollMale)}명</div>
+              <div class="leg-item"><span class="leg-dot" style="background:#f472b6"></span>여 ${fmtNum(d.enrollFemale)}명</div>
             </div>
           </div>
           <!-- 졸업생 진로 현황 -->
@@ -1331,37 +1420,79 @@ function renderOverview(){
   charts['c-job']=new Chart(document.getElementById('c-job'),{
     type:'bar',
     data:{labels:['대전 내 취업자','대전 외 취업자'],datasets:[{data:[d.localEmploy,d.outerEmploy],backgroundColor:['rgba(0,212,170,.8)','rgba(77,166,255,.82)'],borderRadius:8,maxBarThickness:56}]},
-    options:{responsive:true,maintainAspectRatio:false,layout:{padding:{top:24}},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${c.raw}명`}},valueLabelPlugin:{suffix:'명',color:'#e8edf2'}},scales:{x:{grid:{display:false},ticks:{color:chartTextColor,font:{weight:'700'}}},y:{beginAtZero:true,suggestedMax:addAxisPadding([d.localEmploy,d.outerEmploy]),grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}}}}
+    options:{responsive:true,maintainAspectRatio:false,
+      onClick:(evt,els)=>{if(els&&els.length){const i=els[0].index;
+        if(i===0) openStudentSearchWithPreset({year:CY,label:`${CY}학년도 대전 내 취업자`,regionType:'local-employ'});
+        else openStudentSearchWithPreset({year:CY,label:`${CY}학년도 대전 외 취업자`,regionType:'outer-employ'});}},
+      onHover:(evt,els)=>{evt.native.target.style.cursor=(els&&els.length)?'pointer':'default';},
+      layout:{padding:{top:24}},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${c.raw}명 (클릭 시 명단)`}},valueLabelPlugin:{suffix:'명',color:'#e8edf2'}},scales:{x:{grid:{display:false},ticks:{color:chartTextColor,font:{weight:'700'}}},y:{beginAtZero:true,suggestedMax:addAxisPadding([d.localEmploy,d.outerEmploy]),grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}}}}
   });
   destroyChart('c-college');
   charts['c-college']=new Chart(document.getElementById('c-college'),{
     type:'bar',
     data:{labels:['대전 내 진학자','대전 외 진학자'],datasets:[{data:[d.localCollege,d.outerCollege],backgroundColor:['rgba(167,139,250,.82)','rgba(255,183,64,.82)'],borderRadius:8,maxBarThickness:56}]},
-    options:{responsive:true,maintainAspectRatio:false,layout:{padding:{top:24}},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${c.raw}명`}},valueLabelPlugin:{suffix:'명',color:'#e8edf2'}},scales:{x:{grid:{display:false},ticks:{color:chartTextColor,font:{weight:'700'}}},y:{beginAtZero:true,suggestedMax:addAxisPadding([d.localCollege,d.outerCollege]),grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}}}}
+    options:{responsive:true,maintainAspectRatio:false,
+      onClick:(evt,els)=>{if(els&&els.length){const i=els[0].index;
+        if(i===0) openStudentSearchWithPreset({year:CY,label:`${CY}학년도 대전 내 진학자`,regionType:'local-college'});
+        else openStudentSearchWithPreset({year:CY,label:`${CY}학년도 대전 외 진학자`,regionType:'outer-college'});}},
+      onHover:(evt,els)=>{evt.native.target.style.cursor=(els&&els.length)?'pointer':'default';},
+      layout:{padding:{top:24}},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${c.raw}명 (클릭 시 명단)`}},valueLabelPlugin:{suffix:'명',color:'#e8edf2'}},scales:{x:{grid:{display:false},ticks:{color:chartTextColor,font:{weight:'700'}}},y:{beginAtZero:true,suggestedMax:addAxisPadding([d.localCollege,d.outerCollege]),grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}}}}
   });
   destroyChart('c-enrollment');
+  // 학년별 재학생(이탈자 제외) 인원
+  const g1=d.activeRows.filter(r=>r.입학년도===d.cohortYears[0]).length;
+  const g2=d.activeRows.filter(r=>r.입학년도===d.cohortYears[1]).length;
+  const g3=d.activeRows.filter(r=>r.입학년도===d.cohortYears[2]).length;
+  const enrollChartData=[g1,g2,g3,d.enrollDropout,d.enrollTransfer];
+  const dropoutBarIdx=3, transferBarIdx=4;
   charts['c-enrollment']=new Chart(document.getElementById('c-enrollment'),{
     type:'bar',
     data:{
-      labels:['신입생','졸업자','중도탈락'],
+      labels:['1학년','2학년','3학년','중도탈락','전학'],
       datasets:[{
-        data:[d.total, d.graduated||0, d.dropout],
-        backgroundColor:['rgba(0,212,170,.82)','rgba(77,166,255,.82)','rgba(255,107,107,.82)'],
+        data:enrollChartData,
+        backgroundColor:['rgba(0,212,170,.82)','rgba(0,168,126,.82)','rgba(77,166,255,.82)','rgba(255,107,107,.82)','rgba(255,183,64,.82)'],
         borderRadius:8,
-        maxBarThickness:52
+        maxBarThickness:46
       }]
     },
     options:{
       responsive:true,maintainAspectRatio:false,
+      onClick:(evt,elements)=>{
+        if(elements&&elements.length){
+          const idx=elements[0].index;
+          if(idx===0||idx===1||idx===2){ // 1·2·3학년 막대
+            const gradeName=['1학년','2학년','3학년'][idx];
+            openStudentSearchWithPreset({year:CY,label:`${CY}학년도 ${gradeName} 재학생`,enrolledYear:CY,gradeIdx:idx});
+          }else if(idx===dropoutBarIdx){ // 중도탈락 막대
+            openStudentSearchWithPreset({year:CY,label:`${CY}년 중도탈락자`,leaveYear:CY,leaveStatus:'중도탈락'});
+          }else if(idx===transferBarIdx){ // 전학 막대 (0명이면 무시)
+            if(d.enrollTransfer>0){
+              openStudentSearchWithPreset({year:CY,label:`${CY}년 전학생`,leaveYear:CY,leaveStatus:'전학'});
+            }
+          }
+        }
+      },
+      onHover:(evt,elements)=>{
+        const i=elements&&elements.length?elements[0].index:-1;
+        let clickable=(i===0||i===1||i===2||i===dropoutBarIdx);
+        if(i===transferBarIdx && d.enrollTransfer>0) clickable=true;
+        evt.native.target.style.cursor=clickable?'pointer':'default';
+      },
       layout:{padding:{top:24}},
       plugins:{
         legend:{display:false},
-        tooltip:{callbacks:{label:c=>` ${c.raw}명`}},
+        tooltip:{callbacks:{label:c=>{
+          const i=c.dataIndex;
+          if(i===transferBarIdx && c.raw===0) return ` 0명`;
+          if(i===transferBarIdx||i===dropoutBarIdx||i===0||i===1||i===2) return ` ${c.raw}명 (클릭 시 명단)`;
+          return ` ${c.raw}명`;
+        }}},
         valueLabelPlugin:{suffix:'명',color:'#e8edf2'}
       },
       scales:{
         x:{grid:{display:false},ticks:{color:chartTextColor,font:{weight:'700',size:11}}},
-        y:{beginAtZero:true,suggestedMax:addAxisPadding([d.total,d.graduated||0,d.dropout]),grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}}
+        y:{beginAtZero:true,suggestedMax:addAxisPadding(enrollChartData),grid:{color:chartGrid},ticks:{color:chartTextColor,precision:0}}
       }
     }
   });
@@ -1372,7 +1503,7 @@ function renderOverview(){
   destroyChart('c-gender-donut');
   charts['c-gender-donut']=new Chart(document.getElementById('c-gender-donut'),{
     type:'doughnut',
-    data:{labels:['남','여'],datasets:[{data:[d.m,d.f],backgroundColor:['#4da6ff','#f472b6'],borderWidth:0,hoverOffset:5}]},
+    data:{labels:['남','여'],datasets:[{data:[d.enrollMale,d.enrollFemale],backgroundColor:['#4da6ff','#f472b6'],borderWidth:0,hoverOffset:5}]},
     options:{responsive:true,maintainAspectRatio:false,cutout:'66%',plugins:{legend:{display:false}}}
   });
   if(d.graduated){
@@ -1429,6 +1560,30 @@ function renderOverview(){
         y:{stacked:true,grid:{display:false},ticks:{color:'#e8edf2',font:{size:11,weight:'700'}}}
       }
     }
+  });
+
+  // ★ 종합현황 KPI 카드 클릭 → 해당 학생 필터 (el = tab-overview)
+  el.querySelectorAll('.kpi.clickable').forEach(card=>{
+    card.addEventListener('click',()=>{
+      const key=card.dataset.preset;
+      if(key==='employed'){
+        openStudentSearchWithPreset({year:CY,label:`${CY}학년도 취업자`,status:'졸업',path:'취업'});
+      }else if(key==='recruit'){
+        openStudentSearchWithPreset({year:CY,label:`${CY}학년도 신입생 (입학생)`,freshmanYear:CY});
+      }else if(key==='graduated'){
+        openStudentSearchWithPreset({year:CY,label:`${CY}학년도 졸업자`,year:CY,status:'졸업'});
+      }else if(key==='dropout'){
+        openStudentSearchWithPreset({year:CY,label:`${CY}년 중도탈락자`,leaveYear:CY,leaveStatus:'중도탈락'});
+      }else if(key==='enrolled'){
+        openStudentSearchWithPreset({year:CY,label:`${CY}학년도 재학생 (1·2·3학년)`,enrolledYear:CY});
+      }else if(key==='college'){
+        openStudentSearchWithPreset({year:CY,label:`${CY}학년도 진학자`,status:'졸업',pathGroup:'college'});
+      }else if(key==='undecided'){
+        openStudentSearchWithPreset({year:CY,label:`${CY}학년도 미결정자`,status:'졸업',path:'미결정'});
+      }else if(key==='local-stay'){
+        openStudentSearchWithPreset({year:CY,label:`${CY}학년도 지역 정주 대상`,pathGroup:'local-stay'});
+      }
+    });
   });
 }
 
@@ -1689,21 +1844,6 @@ function renderCareer(){
   });
 
 
-  el.querySelectorAll('.kpi.clickable').forEach(card=>{
-    card.addEventListener('click',()=>{
-      const key=card.dataset.preset;
-      if(key==='employed'){
-        openStudentSearchWithPreset({year:CY,label:`${CY}학년도 취업자`,status:'졸업',path:'취업'});
-      }else if(key==='college'){
-        openStudentSearchWithPreset({year:CY,label:`${CY}학년도 진학자`,status:'졸업',pathGroup:'college'});
-      }else if(key==='undecided'){
-        openStudentSearchWithPreset({year:CY,label:`${CY}학년도 미결정자`,status:'졸업',path:'미결정'});
-      }else if(key==='local-stay'){
-        openStudentSearchWithPreset({year:CY,label:`${CY}학년도 지역 정주 대상`,pathGroup:'local-stay'});
-      }
-    });
-  });
-
   destroyChart('c-career-undecided-dept');
   charts['c-career-undecided-dept']=new Chart(document.getElementById('c-career-undecided-dept'),{
     type:'bar',
@@ -1832,6 +1972,7 @@ function stuDetailPanelHtml(r, activeTab){
         <div class="detail-item"><div class="di-label">입학년도</div><div class="di-val">${r.입학년도||'-'}</div></div>
         <div class="detail-item"><div class="di-label">입학학과</div><div class="di-val">${escapeHtml(r.입학학과||'-')}</div></div>
         <div class="detail-item"><div class="di-label">현재 상태</div><div class="di-val">${escapeHtml(r.상태||'-')}</div></div>
+        ${(r.상태==='중도탈락'||r.상태==='전학')?`<div class="detail-item"><div class="di-label">${r.상태==='전학'?'전학':'중도탈락'} 일자</div><div class="di-val">${escapeHtml(r.이탈일자||r.중도탈락일자||'-')}${r.이탈년도?` (${r.이탈년도}년)`:''}</div></div>`:''}
         <div class="detail-item"><div class="di-label">졸업여부</div><div class="di-val">${escapeHtml(r.졸업여부||'-')}</div></div>
         <div class="detail-item"><div class="di-label">졸업년도</div><div class="di-val">${r.졸업년도||'-'}</div></div>
         <div class="detail-item"><div class="di-label">학생구분</div><div class="di-val">${escapeHtml(r.학생구분||'-')}</div></div>
@@ -1878,6 +2019,38 @@ function clearStudentPresetFilter(){
 function applyStudentPresetFilter(rows){
   if(!studentPresetFilter) return rows;
   return rows.filter(r=>{
+    // ★ 이탈(중도탈락·전학) 연도 기준 필터 — 그 해에 이탈한 학생
+    if(studentPresetFilter.leaveYear){
+      const st=studentPresetFilter.leaveStatus;
+      if(st){ if(r.상태!==st) return false; }
+      else if(!['중도탈락','전학'].includes(r.상태)) return false;
+      const ly=(r.이탈년도!==null&&r.이탈년도!==undefined)?r.이탈년도:r.입학년도;
+      return ly===studentPresetFilter.leaveYear;
+    }
+    // ★ 신입생(입학생) 필터 — 입학년도 = Y인 전체
+    if(studentPresetFilter.freshmanYear){
+      return r.입학년도===studentPresetFilter.freshmanYear;
+    }
+    // ★ 재학생(1·2·3학년) 필터 — Y년도에 재학 중이던 학생
+    if(studentPresetFilter.enrolledYear){
+      const Y=studentPresetFilter.enrolledYear;
+      const cohort=[Y,Y-1,Y-2];
+      const gradeIdx=studentPresetFilter.gradeIdx; // 0=1학년,1=2학년,2=3학년 (선택 시 해당 학년만)
+      if(gradeIdx!==undefined && gradeIdx!==null){
+        if(r.입학년도!==cohort[gradeIdx]) return false;
+      }else if(!cohort.includes(r.입학년도)) return false;
+      if(['중도탈락','전학'].includes(r.상태)){
+        // 이탈자는 '재학생(순수)' 목록에서 제외 (이탈자는 별도 필터로 조회)
+        return false;
+      }
+      return true; // 졸업·재학 등 — Y년도엔 재학 중이었음
+    }
+    // (구) 중도탈락 연도 기준 필터 — 하위호환
+    if(studentPresetFilter.dropoutYear){
+      if(r.상태!=='중도탈락') return false;
+      const dy=(r.중도탈락년도!==null&&r.중도탈락년도!==undefined)?r.중도탈락년도:r.입학년도;
+      return dy===studentPresetFilter.dropoutYear;
+    }
     if(studentPresetFilter.year && r.입학년도!==studentPresetFilter.year) return false;
     if(studentPresetFilter.status && r.상태!==studentPresetFilter.status) return false;
     if(studentPresetFilter.path && r.진로유형!==studentPresetFilter.path) return false;
@@ -1886,6 +2059,12 @@ function applyStudentPresetFilter(rows){
     }
     if(studentPresetFilter.regionType==='outer-employ'){
       return r.상태==='졸업' && r.진로유형==='취업' && r.지역!=='대전';
+    }
+    if(studentPresetFilter.regionType==='local-college'){
+      return r.상태==='졸업' && ['전문대','4년제'].includes(r.진로유형) && r.지역==='대전';
+    }
+    if(studentPresetFilter.regionType==='outer-college'){
+      return r.상태==='졸업' && ['전문대','4년제'].includes(r.진로유형) && r.지역!=='대전';
     }
     if(studentPresetFilter.pathGroup==='college'){
       return r.상태==='졸업' && ['전문대','4년제'].includes(r.진로유형);
@@ -1898,7 +2077,12 @@ function applyStudentPresetFilter(rows){
 }
 function openStudentSearchWithPreset(preset){
   studentPresetFilter=preset||null;
-  if(preset && preset.year){
+  if(preset && preset.freshmanYear){
+    searchQ.grade=String(preset.freshmanYear); // 신입생은 입학년도 = Y
+  }else if(preset && (preset.dropoutYear||preset.leaveYear||preset.enrolledYear)){
+    // 연도 기준 코호트/이탈 필터는 입학년도(학년도) 드롭다운 필터를 적용하지 않음
+    searchQ.grade='전체';
+  }else if(preset && preset.year){
     searchQ.grade=String(preset.year);
   }
   selStudentIdx=null;
@@ -2198,7 +2382,7 @@ function bindGradSave(panel, r){
 ──────────────────────────────────────────── */
 const METRIC_FORMULAS=[
   {type:'필수지표',metric:'직업기초능력평가 4~5등급 비율',formula:'직업기초능력평가 4~5등급 학생 수 / 직업기초능력평가 응시 학생 수 × 100'},
-  {type:'필수지표',metric:'중도탈락률',formula:'중도탈락 학생 수 / 해당 학년도 입학생 수 × 100'},
+  {type:'필수지표',metric:'중도탈락률',formula:'해당 연도 중도탈락 학생 수 / 1·2·3학년 전체 재학생 수(총원) × 100'},
   {type:'필수지표',metric:'진로 미결정률',formula:'진로 미결정 학생 수 / 졸업자 수 × 100'},
   {type:'필수지표',metric:'순취업률',formula:'취업자 수 / 졸업자 수 × 100'},
   {type:'필수지표',metric:'지역 내 취업률',formula:'지역 내 취업자 수 / 전체 취업자 수 × 100'},
